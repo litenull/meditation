@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { TranscriptSegment, getSegmentForTime } from './transcript';
 
 interface UseMeditationTTSProps {
@@ -40,10 +40,14 @@ export function useMeditationTTS({
   const [preloadProgress, setPreloadProgress] = useState(0);
   const [debugInfo, setDebugInfo] = useState<string>('');
   
+  // Create refs for maintaining state across renders
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const lastPlayedTimestampRef = useRef<number | null>(null);
   const preloadedAudioRef = useRef<Map<number, string>>(new Map());
+  const playedSegmentsRef = useRef<Set<number>>(new Set());
+  // Add a processing ref to track which segments are currently being processed
+  const processingSegmentsRef = useRef<Set<number>>(new Set());
 
   // Create a timer to track meditation progress
   useEffect(() => {
@@ -129,32 +133,49 @@ export function useMeditationTTS({
     }
   }, [segments, voice, preloadAudio, preloadingStatus]);
 
+  // Helper function for debug info
+  const addDebugInfo = useCallback((message: string) => {
+    console.log(`[MeditationTTS] ${message}`);
+    setDebugInfo(prev => {
+      const newInfo = `${new Date().toISOString().substr(11, 8)} - ${message}\\n${prev}`;
+      // Keep only last 10 lines
+      const lines = newInfo.split('\\n');
+      return lines.slice(0, 10).join('\\n');
+    });
+  }, []); // Empty dependency array means this function reference is stable
+
   // Play audio from the queue when current audio ends
-  const playNextInQueue = async () => {
-    console.log(audioQueue)
-    if (audioQueue.length === 0 || !isPlaying) {
+  const playNextInQueue = useCallback(async (audioToPlay: QueuedAudio) => {
+    // No need to check queue length here, assuming it's called correctly
+    if (!isPlaying) {
       setIsPlayingAudio(false);
-      addDebugInfo('No audio in queue or meditation paused');
+      addDebugInfo('Meditation paused during playback attempt');
+      // Clean up processing state if paused during attempt
+      processingSegmentsRef.current.delete(audioToPlay.timestamp);
       return;
     }
 
     try {
-      setIsLoading(true);
+      setIsLoading(true); // Set loading now that we are processing this specific segment
       setError(null);
       
       // Get the next item from the queue (but don't remove it yet)
-      const nextAudio = audioQueue[0];
+      // const nextAudio = audioQueue[0]; // Use argument audioToPlay instead
       
-      addDebugInfo(`Attempting to play segment at ${nextAudio.timestamp}s: ${nextAudio.text.substring(0, 20)}...`);
+      addDebugInfo(`Attempting to play segment at ${audioToPlay.timestamp}s: ${audioToPlay.text.substring(0, 20)}...`);
+      
+      // Immediately remove from queue and mark as being played to prevent duplicates
+      // setAudioQueue(prevQueue => prevQueue.slice(1)); // Moved to the triggering effect
+      // playedSegmentsRef.current.add(nextAudio.timestamp); // Moved to handleEnded
       
       let audioUrl: string;
       
       // Check if we have this audio preloaded
-      if (preloadedAudioRef.current.has(nextAudio.timestamp)) {
-        addDebugInfo(`Using preloaded audio for timestamp ${nextAudio.timestamp}s`);
-        audioUrl = preloadedAudioRef.current.get(nextAudio.timestamp) as string;
+      if (preloadedAudioRef.current.has(audioToPlay.timestamp)) {
+        addDebugInfo(`Using preloaded audio for timestamp ${audioToPlay.timestamp}s`);
+        audioUrl = preloadedAudioRef.current.get(audioToPlay.timestamp) as string;
       } else {
-        addDebugInfo(`Fetching audio for timestamp ${nextAudio.timestamp}s`);
+        addDebugInfo(`Fetching audio for timestamp ${audioToPlay.timestamp}s`);
         // Fetch speech audio from our API endpoint
         const response = await fetch('/api/tts', {
           method: 'POST',
@@ -162,7 +183,7 @@ export function useMeditationTTS({
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            text: nextAudio.text,
+            text: audioToPlay.text, // Use argument
             voice,
           }),
         });
@@ -206,17 +227,18 @@ export function useMeditationTTS({
         // Free up resources
         URL.revokeObjectURL(audio.src);
         
-        // Now remove from queue after it's done playing
-        setAudioQueue(prevQueue => prevQueue.slice(1));
-        
-        // Update ref for lastPlayedTimestamp
-        lastPlayedTimestampRef.current = nextAudio.timestamp;
+        // Update ref for lastPlayedTimestamp and make sure it's removed from processing
+        lastPlayedTimestampRef.current = audioToPlay.timestamp;
+        // Mark as played only when successfully completed
+        playedSegmentsRef.current.add(audioToPlay.timestamp);
+        // Remove from processing segments to ensure full cleanup
+        processingSegmentsRef.current.delete(audioToPlay.timestamp);
         
         // Reset states
         setIsPlayingAudio(false);
         
-        // Process the next queued audio
-        setTimeout(() => playNextInQueue(), 100);
+        // Process the next queued audio - REMOVED, handled by effect
+        // setTimeout(() => playNextInQueue(), 100); 
       };
       
       const handleError = (event: Event) => {
@@ -229,14 +251,16 @@ export function useMeditationTTS({
         audio.removeEventListener('error', handleError);
         audio.removeEventListener('canplaythrough', handleCanPlayThrough);
         
+        // Remove from processing segments if error occurs
+        processingSegmentsRef.current.delete(audioToPlay.timestamp);
+
         // Remove from queue and try the next item
-        setAudioQueue(prevQueue => prevQueue.slice(1));
         setError(`Audio playback error: ${audioElement.error?.message || 'Unknown error'}`);
         setIsLoading(false);
         setIsPlayingAudio(false);
         
-        // Try the next audio after a delay
-        setTimeout(playNextInQueue, 1000);
+        // Try the next audio after a delay - REMOVED, handled by effect
+        // setTimeout(playNextInQueue, 1000);
       };
       
       // Add event listeners
@@ -295,13 +319,8 @@ export function useMeditationTTS({
               setIsPlayingAudio(false);
               setIsLoading(false);
               
-              // Remove this item from queue
-              setAudioQueue(prevQueue => prevQueue.slice(1));
-              
-              // Try next item after a delay
-              if (audioQueue.length > 1) {
-                setTimeout(playNextInQueue, 1000);
-              }
+              // Try next item after a delay - REMOVED, handled by effect
+              // setTimeout(playNextInQueue, 1000);
             });
         } else {
           // Older browsers might not return a promise
@@ -319,56 +338,42 @@ export function useMeditationTTS({
     } catch (err) {
       const error = err as Error;
       addDebugInfo(`Error in playNextInQueue: ${error.message}`);
+      // Ensure processing state is cleaned up on caught errors
+      processingSegmentsRef.current.delete(audioToPlay.timestamp);
       setError(`Failed to play audio: ${error.message}`);
       setIsLoading(false);
       setIsPlayingAudio(false);
       
-      // Remove the failed audio from queue
-      setAudioQueue(prevQueue => prevQueue.slice(1));
+      // Remove the failed audio from queue - REMOVED, handled by effect
+      // setAudioQueue(prevQueue => prevQueue.slice(1));
       
-      // Try next item after a delay
-      if (audioQueue.length > 1) {
-        setTimeout(playNextInQueue, 1000);
-      }
+      // Try next item after a delay - REMOVED, handled by effect
+      // if (audioQueue.length > 1) {
+      //   setTimeout(playNextInQueue, 1000);
+      // }
     }
-  };
-
-  // Helper function for debug info
-  const addDebugInfo = (message: string) => {
-    console.log(`[MeditationTTS] ${message}`);
-    setDebugInfo(prev => {
-      const newInfo = `${new Date().toISOString().substr(11, 8)} - ${message}\n${prev}`;
-      // Keep only last 10 lines
-      const lines = newInfo.split('\n');
-      return lines.slice(0, 10).join('\n');
-    });
-  };
+  }, [isPlaying, voice, addDebugInfo]); // Dependencies for playNextInQueue
 
   // Handle checking for new segments at timestamps
   useEffect(() => {
     const checkForNewSegment = () => {
       const segment = getSegmentForTime(segments, currentTime);
       
-      // If we have a segment for this time and we haven't played it yet
-      if (segment && lastPlayedTimestampRef.current !== segment.timestamp) {
-        // Check if this segment is already in the queue
-        const isInQueue = audioQueue.some(item => item.timestamp === segment.timestamp);
+      if (segment && isPlaying) {
+        const hasBeenPlayed = playedSegmentsRef.current.has(segment.timestamp);
+        // const isInQueue = audioQueue.some(item => item.timestamp === segment.timestamp);
+        // const isProcessing = processingSegmentsRef.current.has(segment.timestamp);
         
-        // Also check if we've played this segment already (to prevent reprocessing)
-        const hasBeenPlayed = lastPlayedTimestampRef.current !== null && 
-                             segment.timestamp <= lastPlayedTimestampRef.current;
-        
-        if (!isInQueue && !hasBeenPlayed) {
-          console.log(`Adding segment at timestamp ${segment.timestamp}s to queue:`, segment.text);
-          
-          // Add to queue if not already playing or in queue
-          setAudioQueue(prevQueue => {
-            const newQueue = [...prevQueue, { 
-              timestamp: segment.timestamp, 
-              text: segment.text 
-            }];
-            return newQueue;
-          });
+        // Combine the check and marking for processing atomically
+        if (!hasBeenPlayed) {
+            // Attempt to mark as processing. If successful (returns true), queue it.
+            if (processingSegmentsRef.current.add(segment.timestamp)) {
+                addDebugInfo(`Adding segment at timestamp ${segment.timestamp}s to queue: ${segment.text.substring(0, 20)}...`);
+                setAudioQueue(prevQueue => [...prevQueue, { 
+                  timestamp: segment.timestamp, 
+                  text: segment.text 
+                }]);
+            }
         }
       }
     };
@@ -376,45 +381,96 @@ export function useMeditationTTS({
     if (isPlaying) {
       checkForNewSegment();
     }
-  }, [currentTime, segments, isPlaying, isPlayingAudio, isLoading, audioQueue]);
+    // Only trigger when time, segments, or play state change. NOT when queue changes.
+  }, [currentTime, segments, isPlaying, addDebugInfo]); 
 
   // Add separate effect to monitor queue and start playback
   useEffect(() => {
-    // Start playing if we have items in queue and nothing is currently playing
-    if (audioQueue.length > 0 && !isPlayingAudio && !isLoading && isPlaying) {
-      playNextInQueue();
-    }
-  }, [audioQueue, isPlayingAudio, isLoading, isPlaying]);
+    const startPlayback = async () => {
+      // Check conditions: queue has items, not currently playing, not currently loading, meditation is active
+      if (audioQueue.length > 0 && !isPlayingAudio && !isLoading && isPlaying) {
+        // Get the segment to play
+        const segmentToPlay = audioQueue[0];
 
-  // Reset queue when meditation is paused
+        // Double-check if already processing (safety check)
+        if (!processingSegmentsRef.current.has(segmentToPlay.timestamp)) {
+            addDebugInfo(`Segment ${segmentToPlay.timestamp} is in queue but NOT marked processing! Skipping play trigger.`);
+            // This indicates a potential state inconsistency. For now, just return.
+            return;
+        }
+
+        addDebugInfo(`Triggering playNextInQueue for segment ${segmentToPlay.timestamp}`);
+        // Remove from queue *before* calling playNextInQueue to prevent re-triggering
+        setAudioQueue(prevQueue => prevQueue.slice(1));
+        // Call playNextInQueue with the specific segment
+        await playNextInQueue(segmentToPlay); 
+      }
+    };
+    startPlayback();
+    // Dependencies: monitor the queue, playing state, loading state, meditation state, and the playback function itself
+  }, [audioQueue, isPlayingAudio, isLoading, isPlaying, playNextInQueue, addDebugInfo]);
+
+  // Reset state when meditation is reset or paused
   useEffect(() => {
     if (!isPlaying) {
+      // Stop any currently playing audio
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+        audioRef.current.load();
+      }
       setAudioQueue([]);
+      processingSegmentsRef.current.clear();
     }
-  }, [isPlaying]);
+    
+    // Reset all tracking when transitioning from paused to playing
+    if (isPlaying && currentTime === 0) {
+      playedSegmentsRef.current.clear();
+      processingSegmentsRef.current.clear();
+      lastPlayedTimestampRef.current = null;
+    }
+  }, [isPlaying, currentTime]);
+
+  // Handle reset for played segments when timer is reset
+  useEffect(() => {
+    if (currentTime === 0) {
+      playedSegmentsRef.current.clear();
+      processingSegmentsRef.current.clear();
+    }
+  }, [currentTime]);
 
   // Cleanup function
   useEffect(() => {
     return () => {
-      if (audioRef.current) {
-        // Ensure audio is stopped and source is cleared
-        audioRef.current.pause();
-        audioRef.current.src = '';
-        audioRef.current.load(); // Reset the audio element completely
-        audioRef.current = null;
+      // Copy all refs to local variables for cleanup
+      const audioElement = audioRef.current;
+      const preloadedUrls = Array.from(preloadedAudioRef.current.values());
+      const preloadedAudioMap = preloadedAudioRef.current;
+      const playedSegments = playedSegmentsRef.current;
+      const processingSegments = processingSegmentsRef.current;
+      const timer = timerRef.current;
+      
+      if (audioElement) {
+        audioElement.pause();
+        audioElement.src = '';
+        audioElement.load();
       }
       
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
+      if (timer) {
+        clearInterval(timer);
       }
       
-      // Revoke all object URLs to prevent memory leaks
-      preloadedAudioRef.current.forEach(url => {
+      // Clean up preloaded audio URLs
+      preloadedUrls.forEach(url => {
         URL.revokeObjectURL(url);
       });
-      preloadedAudioRef.current.clear();
       
+      // Reset all state using local variables
+      audioRef.current = null;
+      timerRef.current = null;
+      preloadedAudioMap.clear();
+      playedSegments.clear();
+      processingSegments.clear();
       lastPlayedTimestampRef.current = null;
       setIsPlayingAudio(false);
       setAudioQueue([]);
@@ -433,4 +489,4 @@ export function useMeditationTTS({
     preloadProgress,
     debugInfo, // Return debug info for UI display
   };
-} 
+}

@@ -46,6 +46,25 @@ export function getSegmentForTime(
   segments: TranscriptSegment[],
   currentTime: number
 ): TranscriptSegment | undefined {
-  // Find the segment that matches the current time
-  return segments.find(segment => segment.timestamp === Math.floor(currentTime));
-} 
+  // Get segments that align with the current time
+  // We're checking if any segment's timestamp matches the exact second
+  // This provides tight synchronization between timer and audio cues
+  const flooredTime = Math.floor(currentTime);
+  
+  // Find segments that should be played exactly at this time
+  return segments.find(segment => segment.timestamp === flooredTime);
+}
+
+/**
+ * Get all segments that should be played up to a specific time
+ * Used for preloading and checking which segments to queue
+ * @param segments The transcript segments
+ * @param maxTime Maximum time to include segments for (in seconds)
+ * @returns Array of segments
+ */
+export function getSegmentsUpToTime(
+  segments: TranscriptSegment[],
+  maxTime: number
+): TranscriptSegment[] {
+  return segments.filter(segment => segment.timestamp <= maxTime);
+}

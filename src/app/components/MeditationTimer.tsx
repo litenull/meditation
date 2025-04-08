@@ -16,7 +16,7 @@ export default function MeditationTimer({
   voiceOptions = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'],
 }: MeditationTimerProps) {
   const [duration, setDuration] = useState(initialDuration);
-  const [transcript, setTranscript] = useState(initialTranscript);
+  const [transcript, setTranscript] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [selectedVoice, setSelectedVoice] = useState(voiceOptions[0]);
@@ -24,6 +24,23 @@ export default function MeditationTimer({
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [isFirefox, setIsFirefox] = useState(false);
+
+  // Load transcript from localStorage on mount
+  useEffect(() => {
+    const savedTranscript = localStorage.getItem('meditationTranscript');
+    if (savedTranscript) {
+      setTranscript(savedTranscript);
+    } else {
+      setTranscript(initialTranscript); // Use initial prop if nothing saved
+    }
+  }, [initialTranscript]);
+
+  // Save transcript to localStorage whenever it changes
+  useEffect(() => {
+    // Only save if transcript is not the initial empty string (avoids saving on first load before potential restore)
+    // Or better, check if it's different from the prop *or* if it's been manually changed. Let's just save it.
+    localStorage.setItem('meditationTranscript', transcript);
+  }, [transcript]);
 
   // Parse transcript when it changes
   useEffect(() => {

@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useMeditationTTS } from '../lib/useMeditationTTS';
 import { parseTranscript, TranscriptSegment } from '../lib/transcript';
+import { PlayIcon, PauseIcon, ArrowPathIcon } from '@heroicons/react/24/solid';
 
 interface MeditationTimerProps {
   initialDuration?: number; // in seconds
@@ -83,12 +84,12 @@ export default function MeditationTimer({
     }
   }, []);
 
-  // Format time as MM:SS
-  const formatTime = (seconds: number) => {
+  // Format time as MM:SS – memoised to avoid re‑creation each render
+  const formatTime = useCallback((seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
+  }, []);
 
   // Track if user has interacted with the page
   useEffect(() => {
@@ -117,7 +118,7 @@ export default function MeditationTimer({
   }, [hasUserInteracted]);
 
   // Toggle play/pause
-  const togglePlay = () => {
+  const togglePlay = useCallback(() => {
     setIsPlaying(!isPlaying);
     
     // This counts as a user interaction
@@ -152,12 +153,12 @@ export default function MeditationTimer({
         console.warn("Error unlocking audio context:", e);
       }
     }
-  };
+  }, [isPlaying]);
 
   // Reset timer
-  const resetTimer = () => {
+  const resetTimer = useCallback(() => {
     setIsPlaying(false);
-  };
+  }, []);
 
   // Check if meditation is completed
   const isCompleted = currentTime >= duration;
@@ -170,7 +171,7 @@ export default function MeditationTimer({
   }, [isCompleted]);
 
   return (
-    <div className="flex flex-col gap-6 max-w-2xl mx-auto p-6 rounded-lg bg-gray-50 dark:bg-gray-800 shadow-md">
+    <div className="flex flex-col gap-6 max-w-2xl mx-auto p-8 rounded-2xl bg-white/30 dark:bg-gray-800/40 backdrop-blur-lg shadow-xl border border-white/20 dark:border-gray-700">
       {/* Timer Display */}
       <div className="text-center">
         <h2 className="text-4xl font-bold font-mono">
@@ -178,28 +179,36 @@ export default function MeditationTimer({
         </h2>
         
         {/* Progress Bar */}
-        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5 mt-4">
+        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 mt-4">
           <div 
-            className="bg-blue-600 h-2.5 rounded-full transition-all duration-1000 ease-linear"
+            className="bg-blue-600 h-3 rounded-full transition-all duration-1000 ease-linear"
             style={{ width: `${progress}%` }}
           ></div>
         </div>
       </div>
 
       {/* Controls */}
-      <div className="flex justify-center gap-4">
+      <div className="flex justify-center gap-6">
         <button
           onClick={togglePlay}
           disabled={isCompleted || (preloadAudio && preloadingStatus === 'loading')}
-          className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+          aria-label={isPlaying ? 'Pause meditation' : 'Start meditation'}
+          className="flex items-center justify-center w-14 h-14 rounded-full focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed transition-transform active:scale-95
+            bg-blue-600 hover:bg-blue-700 text-white shadow-lg"
         >
-          {isPlaying ? 'Pause' : 'Start'}
+          {isPlaying ? (
+            <PauseIcon className="w-7 h-7" />
+          ) : (
+            <PlayIcon className="w-7 h-7" />
+          )}
         </button>
         <button
           onClick={resetTimer}
-          className="px-5 py-2 bg-gray-300 hover:bg-gray-400 dark:bg-gray-700 dark:hover:bg-gray-600 font-medium rounded-lg"
+          aria-label="Reset meditation"
+          className="flex items-center justify-center w-14 h-14 rounded-full focus:outline-none transition-transform active:scale-95
+            bg-gray-300 hover:bg-gray-400 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 shadow"
         >
-          Reset
+          <ArrowPathIcon className="w-6 h-6" />
         </button>
       </div>
 
@@ -216,8 +225,8 @@ export default function MeditationTimer({
           <p className="font-medium mb-2">Firefox Autoplay Guide:</p>
           <ol className="list-decimal pl-5 space-y-1">
             <li>Click the shield icon in your address bar</li>
-            <li>Check if "Autoplay blocking" is enabled</li>
-            <li>Select "Allow Audio and Video" for this site</li>
+            <li>Check if &quot;Autoplay blocking&quot; is enabled</li>
+            <li>Select &quot;Allow Audio and Video&quot; for this site</li>
             <li>Refresh the page and try again</li>
           </ol>
         </div>

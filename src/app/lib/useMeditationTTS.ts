@@ -410,34 +410,45 @@ export function useMeditationTTS({
     // Dependencies: monitor the queue, playing state, loading state, meditation state, and the playback function itself
   }, [audioQueue, isPlayingAudio, isLoading, isPlaying, playNextInQueue, addDebugInfo]);
 
-  // Reset state when meditation is reset or paused
+  // Effect to handle pausing and resuming the currently playing audio element
   useEffect(() => {
-    if (!isPlaying) {
-      // Stop any currently playing audio
+    // If the meditation is playing again, attempt to resume any paused audio
+    if (isPlaying) {
+      if (audioRef.current && audioRef.current.paused && audioRef.current.src) {
+        audioRef.current
+          .play()
+          .catch((err) => {
+            // If the browser blocks autoplay after resume, surface a helpful error
+            addDebugInfo(`Failed to resume audio: ${err.message}`);
+            if (err.name === 'NotAllowedError') {
+              setError('Audio playback was blocked by the browser. Please interact with the page first.');
+            }
+          });
+      }
+    } else {
+      // Meditation is paused – pause the current audio but keep the source so we can resume later
+      if (audioRef.current && !audioRef.current.paused) {
+        audioRef.current.pause();
+      }
+    }
+  }, [isPlaying, addDebugInfo]);
+
+  // Reset state when meditation is reset (currentTime === 0 and not playing)
+  useEffect(() => {
+    if (!isPlaying && currentTime === 0) {
+      // Stop and fully release any audio resources
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.src = '';
         audioRef.current.load();
       }
+      // Clear queues and tracking sets – we are starting fresh
       setAudioQueue([]);
       processingSegmentsRef.current.clear();
-    }
-    
-    // Reset all tracking when transitioning from paused to playing
-    if (isPlaying && currentTime === 0) {
       playedSegmentsRef.current.clear();
-      processingSegmentsRef.current.clear();
       lastPlayedTimestampRef.current = null;
     }
   }, [isPlaying, currentTime]);
-
-  // Handle reset for played segments when timer is reset
-  useEffect(() => {
-    if (currentTime === 0) {
-      playedSegmentsRef.current.clear();
-      processingSegmentsRef.current.clear();
-    }
-  }, [currentTime]);
 
   // Cleanup function
   useEffect(() => {

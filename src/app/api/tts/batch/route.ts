@@ -1,10 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
-
-// Initialize the OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import openai from '@/lib/openai';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,7 +16,12 @@ export async function POST(request: NextRequest) {
     const results = await Promise.all(
       segments.map(async (segment) => {
         try {
-          const newText = `Please read the following text in a chill, mindful, empathetic tone: ${segment.text}`;
+          const newText = `
+            Please follow these instructions carefully!
+            When reading the following, speak in a calm, mindful, and empathetic tone. If any part of the text is wrapped in double asterisks (e.g. [sound of ocean waves]), please pause and vividly create that sound with your voice or a vocal approximation, as if you are sound-designing a moment in a meditation session.
+            Do not add your own words or any other text. Please follow the entire text, make sure you dont miss anything.
+            Now, please begin:
+            ${segment.text}`;
           
           // Call OpenAI's Audio API
           const response = await openai.chat.completions.create({
